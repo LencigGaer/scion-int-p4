@@ -29,6 +29,23 @@ private:
     std::unique_ptr<p4::v1::WriteRequest> request;
 };
 
+/// \brief Encapsulated a read request for the dataplane. Constructed by
+/// SwitchConnection::createReadRequest.
+class ReadRequest
+{
+public:
+    /// \brief Add an entity to the request.
+    /// \param[in] entity
+    p4::v1::Entity* addEntity();
+
+private:
+    ReadRequest(DeviceId deviceId);
+    friend class SwitchConnection;
+
+private:
+    std::unique_ptr<p4::v1::ReadRequest> request;
+};
+
 
 /// \brief P4Runtime connection to a switch.
 class SwitchConnection
@@ -54,10 +71,20 @@ public:
     {
         return WriteRequest(deviceId, electionId);
     }
+    
+    /// \brief Return an empty ReadRequest to be populated with entities by the caller.
+    ReadRequest createReadRequest() const
+    {
+        return ReadRequest(deviceId);
+    }
 
     /// \brief Send a write request to the switch.
     /// \return True on success, false on failure.
     bool sendWriteRequest(const WriteRequest &request);
+    
+    /// \brief Send a read request to the switch.
+    /// \return ReadResponse on success, NULL on failure.
+    bool sendReadRequest(const ReadRequest &request, p4::v1::ReadResponse* response);
 
     /// \brief Read the next message from the persistent stream.
     bool readStream(p4::v1::StreamMessageResponse& response)

@@ -31,6 +31,22 @@ void WriteRequest::addUpdate(p4::v1::Update_Type type, std::unique_ptr<p4::v1::E
     update->set_allocated_entity(entity.release());
 }
 
+//////////////////
+// ReadRequest //
+//////////////////
+
+ReadRequest::ReadRequest(DeviceId deviceId)
+    : request(std::make_unique<p4::v1::ReadRequest>())
+{
+    request->set_device_id(deviceId);
+}
+
+p4::v1::Entity* ReadRequest::addEntity()
+{
+    auto entity = request->add_entities();
+    return entity;
+}
+
 
 //////////////////////
 // SwitchConnection //
@@ -93,6 +109,20 @@ bool SwitchConnection::sendWriteRequest(const WriteRequest &request)
     grpc::Status status = stub->Write(&ctx, *request.request.get(), &response);
     if (!status.ok())
         std::cout << "Write request failed: " << status.error_message() << std::endl;
+    return status.ok();
+}
+
+bool SwitchConnection::sendReadRequest(const ReadRequest &request, p4::v1::ReadResponse* response)
+{
+    grpc::ClientContext ctx;
+    auto responseReader = stub->Read(&ctx, *request.request.get());
+    grpc::Status status;
+    if (!responseReader->Read(response))
+    {
+        std::cout << "Could not read from response!" << std::endl;
+        return false;
+    } else 
+        status = responseReader->Finish();
     return status.ok();
 }
 

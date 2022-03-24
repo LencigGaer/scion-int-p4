@@ -342,7 +342,7 @@ control MyDeparser(packet_out packet, in headers_t hdr)
 @pkginfo(name="int_switch")
 @pkginfo(version="0.1")
 V1Switch(
-    EthernetParser(),
+    ScionParser(),
     MyVerifyChecksum(),
     MyIngress(),
     MyEgress(),

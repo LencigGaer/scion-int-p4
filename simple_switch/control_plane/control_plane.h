@@ -7,6 +7,7 @@
 #include <p4/v1/p4runtime.pb.h>
 #include <p4/v1/p4runtime.grpc.pb.h>
 #include <p4/config/v1/p4info.pb.h>
+#include <boost/asio.hpp>
 
 #include <memory>
 #include <utility>
@@ -42,7 +43,7 @@ public:
     template <typename T, typename... Args>
     void addController(Args&&... args)
     {
-        ctrls.emplace_back(std::make_unique<T>(*con, *p4Info, std::forward<Args>(args)...));
+        ctrls.emplace_back(std::make_unique<T>(*con, *p4Info, io_service, std::forward<Args>(args)...));
     }
 
     /// \brief Run the controller. Returns when the connection has been closed by the switch.
@@ -56,4 +57,5 @@ private:
     std::unique_ptr<p4::config::v1::P4Info> p4Info;
     DeviceConfig deviceConfig;
     std::vector<std::unique_ptr<Controller>> ctrls;
+    boost::asio::io_service io_service;
 };

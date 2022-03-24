@@ -11,15 +11,18 @@
 #include <p4/config/v1/p4info.pb.h>
 
 #include <boost/array.hpp>
-
-#include <vector>
+#include <boost/asio.hpp>
+#include <boost/asio/spawn.hpp>
 #include <boost/coroutine2/all.hpp>
 
+#include <vector>
+
+void txCntUpdater(boost::asio::io_service &io_service, SwitchConnection& connection, uint32_t counterTxId, boost::asio::yield_context yield_context);
 
 class IntController : public Controller
 {
 public:
-    IntController(SwitchConnection& con, const p4::config::v1::P4Info &p4Info_,
+    IntController(SwitchConnection& con, const p4::config::v1::P4Info &p4Info_, boost::asio::io_service &io_service,
         std::string hostASStr, uint32_t nodeId, std::string intTablePath, std::string kafkaAddress, 
         std::string tcpAddress);
 
@@ -42,11 +45,9 @@ private:
 
 private:
     p4::config::v1::P4Info p4Info;
-    uint32_t counterTxId;
     uint32_t nodeID;
     uint64_t hostAS;
     uint16_t hostISD;
-    std::vector<uint32_t> txCountList;
     std::vector<uint64_t> asList;
     std::vector<uint16_t> bitmaskIntList;
     std::vector<uint16_t> bitmaskScionList;

@@ -7,6 +7,9 @@
 #include <p4/config/v1/p4info.pb.h>
 
 #include <boost/array.hpp>
+#include <boost/asio.hpp>
+#include <boost/asio/spawn.hpp>
+#include <boost/bind/bind.hpp>
 #include <boost/coroutine2/all.hpp>
 
 #include <iomanip>
@@ -57,16 +60,16 @@ static uint16_t takeUint16(const char* payload, uint32_t pos);
 static uint8_t takeUint8(const char* payload, uint32_t pos);
 
 
-IntController::IntController(SwitchConnection& con, const p4::config::v1::P4Info &p4Info_,
+IntController::IntController(SwitchConnection& con, const p4::config::v1::P4Info &p4Info_, boost::asio::io_service &io_service,
     std::string hostASStr, uint32_t nodeId, std::string intTablePath, std::string kafkaAddress, 
     std::string tcpAddress)
     : p4Info(p4Info_)
-    , counterTxId(0)
     , nodeID(nodeId)
     , kafkaProd(kafkaAddress)
     , tcpSocket(tcpAddress)
 {
     // Get counter IDs by their names
+    uint32_t counterTxId = 0;
     for (const auto& counter : p4Info.counters())
     {
         if (counter.preamble().name() == COUNTER_TX_BYTE_NAME)
@@ -97,8 +100,8 @@ IntController::IntController(SwitchConnection& con, const p4::config::v1::P4Info
     // Read table from given file
     readIntTable(intTablePath, asList, bitmaskIntList, bitmaskScionList);
     
-    // Initialize txCount memory
-    txCountList = std::vector<uint32_t>(512, 0);
+    // Spawn coroutine for tx utilization updates on given context
+    boost::asio::spawn(io_service, boost::bind(txCntUpdater, boost::ref(io_service), boost::ref(con), counterTxId, boost::placeholders::_1));
 }
 
 void IntController::handleArbitrationUpdate(
@@ -150,7 +153,7 @@ bool IntController::handlePacketIn(SwitchConnection& con, const p4::v1::PacketIn
     auto bitmaskInt = takeUint16(payload, (uint32_t) (pos + hdrLen - 8));
     auto bitmaskScion = takeUint16(payload, (uint32_t) (pos + hdrLen - 4));
     
-    // Check, if payload's length is a multiple of the lengths of the defined INT fields
+    // Check, if payload's length is a multiple of the length per hop length
     auto intStackSize = takeUint8(payload, (uint32_t) (pos + hdrLen - 12 - 3)) - 12;
     auto intHopSize = takeUint8(payload, (uint32_t) (pos + hdrLen - 10)) % (1 << 5);
     if ((intStackSize % intHopSize) != 0) {
@@ -158,7 +161,7 @@ bool IntController::handlePacketIn(SwitchConnection& con, const p4::v1::PacketIn
         return false;
     }
     
-    // Create Kafka report basics
+    // Create Kafka report
     telemetry::report::Report report;
     
     // Move pos forward to skip the headers
@@ -266,6 +269,74 @@ bool IntController::handlePacketIn(SwitchConnection& con, const p4::v1::PacketIn
     tcpSocket.send(strReport);
     return true;
 }
+
+
+/// \brief Update data plane tx link utilization
+void txCntUpdater(boost::asio::io_service &io_service, SwitchConnection& connection, uint32_t counterTxId, boost::asio::yield_context yield_context)
+{
+    // Initialize txCount memory
+    std::vector<uint32_t> txCountList = std::vector<uint32_t>(512, 0);
+    
+    // Get time reference
+    auto oldTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+    
+    // Create timer to wait on for next execution after update is done
+    boost::asio::deadline_timer timer(io_service);
+    
+    for(;;)
+    {
+        std::cout << "Hi!" << std::endl;
+        // Get actual time
+        auto currentTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+        // Create counter read request
+        auto request = connection.createReadRequest();
+        auto entity = request.addEntity();
+        auto entry = entity->mutable_counter_entry();
+        entry->set_counter_id(counterTxId);
+        // Send counter read request
+        p4::v1::ReadResponse response;
+        if (!connection.sendReadRequest(request, &response))
+        {
+            std::cout << "Could not access Counter!" << std::endl;
+        }
+        else
+        {
+            // Prepare table entry update request
+            auto updateRequest = connection.createWriteRequest();
+            // Handle all counter fields
+            for (int i = 0; i < 512; i++)
+            {
+                // Handle counter response
+                entity = response.mutable_entities(i);
+                entry = entity->release_counter_entry();
+                if (entry->counter_id() != counterTxId)
+                {
+                    std::cout << "ERROR: Received wrong counter ID for tx count!" << std::endl;
+                    break;
+                }
+                entry->release_index();
+                uint32_t data = entry->release_data()->byte_count();
+                // Calculate the link utilization
+                uint32_t relLinkUtil = 0;
+                if (data - txCountList[i] > 1666717)
+                    relLinkUtil = std::numeric_limits<uint32_t>::max() - 2;
+                else
+                    relLinkUtil = static_cast<float>(data - txCountList[i]) / 1666718 * static_cast<float>(std::numeric_limits<uint32_t>::max() -  2) / (currentTime - oldTime).count() * 100;
+                // Create table entry update request for tx count
+                if (i == 1)
+                updateRequest.addUpdate(p4::v1::Update::MODIFY, buildIntTxUtilTableEntry(i, relLinkUtil));
+                txCountList[i] = data;
+            }
+            // Send update request
+            connection.sendWriteRequest(updateRequest);
+        }
+        oldTime = currentTime;
+        // Wait for 100 ms until next execution
+        timer.expires_from_now(boost::posix_time::millisec(100));
+        timer.async_wait(yield_context);
+    }
+}
+
 
 /// \brief Install table entries that are known a priori and should not be learned.
 bool IntController::installStaticTableEntries(SwitchConnection &con)

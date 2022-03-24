@@ -14,6 +14,7 @@
 /// 1. A reference to the connection object.
 /// 2. A constant reference to the P4Info message describing the control plane interface of the
 /// data plane program.
+/// 3. A reference to the io_service to manage asynchronous operations.
 class Controller
 {
 public:

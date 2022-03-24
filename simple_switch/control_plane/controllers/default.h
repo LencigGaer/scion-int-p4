@@ -1,6 +1,8 @@
 #pragma once
 
 #include "controller.h"
+#include <boost/asio.hpp>
+
 
 
 /// \brief Controller that prints callback invocations to stdout. Useful at the bottom of the
@@ -8,7 +10,7 @@
 class DefaultController : public Controller
 {
 public:
-    DefaultController(SwitchConnection& con, const p4::config::v1::P4Info &p4Info)
+    DefaultController(SwitchConnection& con, const p4::config::v1::P4Info &p4Info, boost::asio::io_service &io_service)
     {};
 
 public:

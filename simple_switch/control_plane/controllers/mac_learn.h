@@ -3,6 +3,7 @@
 #include "common.h"
 #include "connection.h"
 #include "controller.h"
+#include <boost/asio.hpp>
 
 
 /// \brief A simple controller for L2 MAC learning without aging or support for moving a MAC from
@@ -10,7 +11,7 @@
 class MacLearningCtrl : public Controller
 {
 public:
-    MacLearningCtrl(SwitchConnection& con, const p4::config::v1::P4Info &p4Info);
+    MacLearningCtrl(SwitchConnection& con, const p4::config::v1::P4Info &p4Info, boost::asio::io_service &io_service);
 
 private:
     /// \name Initialization Functions

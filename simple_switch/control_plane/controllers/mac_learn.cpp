@@ -5,6 +5,7 @@
 #include <p4/v1/p4runtime.pb.h>
 #include <p4/v1/p4runtime.grpc.pb.h>
 #include <p4/config/v1/p4info.pb.h>
+#include <boost/asio.hpp>
 
 #include <iomanip>
 #include <iostream>
@@ -38,7 +39,7 @@ static std::unique_ptr<p4::v1::Entity> buildDigestEntity(uint32_t digestId);
 // MacLearningCtrl //
 ////////////////////
 
-MacLearningCtrl::MacLearningCtrl(SwitchConnection& con, const p4::config::v1::P4Info &p4Info)
+MacLearningCtrl::MacLearningCtrl(SwitchConnection& con, const p4::config::v1::P4Info &p4Info, boost::asio::io_service &io_service)
 {
     for (const auto& digest : p4Info.digests())
     {

@@ -42,7 +42,7 @@
 // Parser //
 ////////////
 
-parser EthernetParser(
+parser ScionParser(
     packet_in packet,
     out headers_t hdr,
     inout metadata_t meta,

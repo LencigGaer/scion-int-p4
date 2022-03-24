@@ -6,6 +6,7 @@
 #include <p4/v1/p4runtime.grpc.pb.h>
 #include <p4/config/v1/p4info.pb.h>
 #include <boost/range/adaptor/reversed.hpp>
+#include <boost/asio.hpp>
 
 #include <iomanip>
 #include <iostream>
@@ -33,6 +34,8 @@ void ControlPlane::run()
 
     if (!con->sendMasterArbitrationUpdate())
         return;
+        
+    //io_service.run();
 
     StreamMessageResponse msg;
     while(con->readStream(msg))
@@ -68,6 +71,8 @@ void ControlPlane::run()
             std::cout << "Unknown data plane event" << std::endl;
             break;
         }
+        
+        //io_service.poll_one();
     }
 }
 
