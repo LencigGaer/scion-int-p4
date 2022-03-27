@@ -51,7 +51,6 @@ control INTSwitchIngress(
         }
         hdr.int_md.domainInstructions = domainBits;
         hdr.int_md.domainFlags = 0x0000;
-        meta.addLen = 0x10;
         // Add INT-Stack
             // Add node ID
         if (hdr.int_md.instructionBitmap & 0x8000 == 0x8000)
@@ -136,7 +135,6 @@ control INTSwitchIngress(
 
     apply {
 	    meta.intState = 2;
-	    meta.addLen = 0;
         if (hdr.ethernet.isValid()) {
             if (hdr.udp_scion.isValid()) {
                 scion_int.apply();
@@ -162,21 +160,18 @@ control INTSwitchEgress(
     @id(0x01002003)
     @brief("Add nodeID to INT stack")
     action insert_int_node_id(bit<32> nodeID) {
-        meta.addLen = meta.addLen + 0x04;
         hdr.int_stack.nodeID.setValid();
         hdr.int_stack.nodeID.nodeID = nodeID;
     }
     
     // Add ingress timestamp to INT stack
     action insert_int_ig_timestamp() {
-        meta.addLen = meta.addLen + 0x08;
         hdr.int_stack.ingressTime.setValid();
         hdr.int_stack.ingressTime.ingressTime = (bit<64>)std_meta.ingress_global_timestamp;
     }
     
     // Add egress timestamp to INT stack
     action insert_int_eg_timestamp() {
-        meta.addLen = meta.addLen + 0x08;
         hdr.int_stack.egressTime.setValid();
         hdr.int_stack.egressTime.egressTime = (bit<64>)std_meta.egress_global_timestamp;
     }
@@ -185,7 +180,6 @@ control INTSwitchEgress(
     @id(0x01002004)
     @brief("Insert Tx link utilization into INT stack.")
     action insert_int_eg_if_util(bit<32> txUtil) {
-        meta.addLen = meta.addLen + 0x04;
         hdr.int_stack.egressIFUtilization.setValid();
         hdr.int_stack.egressIFUtilization.egressIFUtil = txUtil;
     }
@@ -193,31 +187,32 @@ control INTSwitchEgress(
     @id(0x01002005)
     @brief("Add Scion AS addr to INT stack")
     action insert_sci_as_addr(bit<64> asAddr) {
-        meta.addLen = meta.addLen + 0x08;
         hdr.int_stack.sciAsAddr.setValid();
         hdr.int_stack.sciAsAddr.asAddr = asAddr;
     }
     
     // Update length-fields of underlying headers
-    action int_refresh_length() {
-        hdr.int_md.hopML = hdr.int_md.hopML + (bit<5>)((meta.addLen - 0x10) / 4);
-        hdr.int_shim.length = hdr.int_shim.length + (bit<8>)((meta.addLen-0x10) / 4);
-        hdr.udp_scion.len = hdr.udp_scion.len + meta.addLen;
-        hdr.scion_common.payloadLen = hdr.scion_common.payloadLen + meta.addLen;
-        hdr.udp.len = hdr.udp.len + meta.addLen;
+    @id(0x01002006)
+    @brief("Add length of new inserted INT metadata.")
+    action int_add_length(bit<16> stackLen) {
+        hdr.int_md.hopML = hdr.int_md.hopML + (bit<5>)(stackLen / 4);
+        hdr.int_shim.length = hdr.int_shim.length + (bit<8>)(stackLen / 4);
+        hdr.udp_scion.len = hdr.udp_scion.len + 0x10 + stackLen;
+        hdr.scion_common.payloadLen = hdr.scion_common.payloadLen + 0x10 + stackLen;
+        hdr.udp.len = hdr.udp.len + 0x10 + stackLen;
         
     #ifndef DISABLE_IPV4
 	    
-	    hdr.ipv4.totalLen = hdr.ipv4.totalLen + meta.addLen;
+	    hdr.ipv4.totalLen = hdr.ipv4.totalLen + 0x10 + stackLen;
 
     #endif /* DISABLE_IPV4 */
     #ifndef DISABLE_IPV6
 	    
-	    hdr.ipv6.payloadLen = hdr.ipv6.payloadLen + meta.addLen;
+	    hdr.ipv6.payloadLen = hdr.ipv6.payloadLen + 0x10 + stackLen;
 
     #endif /* DISABLE_IPV6 */
         
-        std_meta.packet_length = std_meta.packet_length + (bit<32>)meta.addLen;
+        std_meta.packet_length = std_meta.packet_length + 0x10 + (bit<32>)stackLen;
     }
     
     @brief("Delete INT header.")
@@ -225,7 +220,7 @@ control INTSwitchEgress(
         // Reset UDP destination port
         hdr.udp_scion.dstPort = hdr.int_shim.udpPort;
         // Update length-fields
-        bit<16> subLen = 0x04 + (bit<32>)int_shim.length * 4;
+        bit<16> subLen = 0x04 + (bit<16>)hdr.int_shim.length * 4;
         hdr.udp_scion.len = hdr.udp_scion.len - subLen;
         hdr.scion_common.payloadLen = hdr.scion_common.payloadLen - subLen;
         hdr.udp.len = hdr.udp.len - subLen;
@@ -343,18 +338,18 @@ control INTSwitchEgress(
     }
     
     // Table checks if the length fields of underlying headers need to be refreshed
+    @id(0x02002005)
+    @brief("Check for the length of the new added INT stack according to the bitmask.")
     table scion_int_length {
         key = {
-            meta.intState: exact;
+            hdr.int_md.instructionBitmap: exact;
+            hdr.int_md.domainInstructions: exact;
         }
         actions = {
-            int_refresh_length;
+            int_add_length;
             NoAction;
         }
         default_action = NoAction();
-        const entries = {
-            1: int_refresh_length();
-        }
     }
 
     // Table lookup to check whether to delete INT or to delete everything else, if packet is forwarded to CPU

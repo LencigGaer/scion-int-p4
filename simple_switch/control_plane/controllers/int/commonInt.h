@@ -23,3 +23,6 @@ using nodeID_t = uint32_t;
 
 constexpr size_t LINK_UTIL_BYTES = 4;
 using LinkUtil = uint32_t;
+
+constexpr size_t BITMASK_BYTES = 2;
+using Bitmask = uint16_t;

@@ -67,10 +67,7 @@ struct headers_t {
 struct metadata_t {
     bit<2>  intState;
     bit<32> intStackLen;
-    @field_list(1)
-    bit<64> cpuHdrLen;
-    bit<16> addLen;
-    // Remember the set bitmask fields
+    @field_list(1) bit<64> cpuHdrLen;
     bit<1>  intNodeID;
     bit<1>  intL1IfID;
     bit<1>  intHopLatency;

@@ -36,10 +36,12 @@ constexpr uint32_t ACTION_CLONE_INT = 0x01002002;
 constexpr uint32_t ACTION_INSERT_NODE_ID = 0x01002003;
 constexpr uint32_t ACTION_INSERT_TX_UTIL = 0x01002004;
 constexpr uint32_t ACTION_INSERT_AS_ADDR = 0x01002005;
+constexpr uint32_t ACTION_INT_ADD_LEN = 0x01002006;
 constexpr uint32_t TABLE_SCION_INT = 0x02002001;
 constexpr uint32_t TABLE_INT_NODE_ID = 0x02002002;
 constexpr uint32_t TABLE_INT_TX_UTIL = 0x02002003;
 constexpr uint32_t TABLE_INT_AS_ADDR = 0x02002004;
+constexpr uint32_t TABLE_INT_LEN_UPDATE = 0x02002005;
 
 // The ID of the tc byte counter is read from the P4Info message.
 static const char* COUNTER_TX_BYTE_NAME = "txCounter";
@@ -50,6 +52,7 @@ static std::unique_ptr<p4::v1::Entity> buildScionIntTableEntry(isdAddr isd, asAd
 static std::unique_ptr<p4::v1::Entity> buildSciAsAddrTableEntry(asAddr as);
 static std::unique_ptr<p4::v1::Entity> buildIntNodeIdTableEntry(nodeID_t nodeID);
 static std::unique_ptr<p4::v1::Entity> buildIntTxUtilTableEntry(Port port, LinkUtil txCount);
+static std::unique_ptr<p4::v1::Entity> buildIntLenUpdateTableEntry(uint16_t bitmaskInt, uint16_t bitmaskScion, uint16_t len);
 static std::unique_ptr<p4::v1::Entity> buildCloneSessionEntry(uint32_t sessionId);
 static uint64_t takeUint64(const char* payload, uint32_t pos);
 static uint32_t takeUint32(const char* payload, uint32_t pos);
@@ -281,7 +284,8 @@ bool IntController::installStaticTableEntries(SwitchConnection &con)
         0, 0,
         ACTION_CLONE_INT
     ));
-    con.sendWriteRequest(request);
+    if (!con.sendWriteRequest(request))
+        return false;
     for (int i = 0; i < asList.size(); i++)
     {
         request = con.createWriteRequest();
@@ -295,7 +299,8 @@ bool IntController::installStaticTableEntries(SwitchConnection &con)
                 bitmaskScionList[i],
                 ACTION_INSERT_INT
             ));
-        con.sendWriteRequest(request);
+        if (!con.sendWriteRequest(request))
+            return false;
     }
     
     // Create entries for node ID and AS address
@@ -303,12 +308,49 @@ bool IntController::installStaticTableEntries(SwitchConnection &con)
     request.addUpdate(p4::v1::Update::INSERT, buildIntNodeIdTableEntry(nodeID));
     request.addUpdate(p4::v1::Update::INSERT, buildSciAsAddrTableEntry(hostAS));
     
+    // Create initial entries for txCount table
     for (int i = 0; i < 512; i++)
     {
         request.addUpdate(p4::v1::Update::INSERT, buildIntTxUtilTableEntry(i, 0));
     }
+    if (!con.sendWriteRequest(request))
+        return false;
     
-    return con.sendWriteRequest(request);
+    // Create entries for bitmask lengths
+    for (uint64_t i = 0; i < ((uint64_t)1 << 32); i++)
+    {
+        request = con.createWriteRequest();
+        uint16_t bitmaskInt = i >> 16;
+        uint16_t bitmaskScion = i % (1 << 16);
+        uint16_t stackSize = 0;
+        if (bitmaskInt & (1 << 15)) // INT node ID
+            stackSize += 4;
+        if (bitmaskInt & (1 << 14)) // INT_L1_IF_ID
+            stackSize += 4;
+        if (bitmaskInt & (1 << 13)) // INT_HOP_LATENCY
+            stackSize += 4;
+        if (bitmaskInt & (1 << 12)) // INT_QUEUE
+            stackSize += 4;
+        if (bitmaskInt & (1 << 11)) // INT_IG_TIME
+            stackSize += 8;
+        if (bitmaskInt & (1 << 10))// INT_EG_TIME
+            stackSize += 8;
+        if (bitmaskInt & (1 << 9)) // INT_L2_IF_ID
+            stackSize += 8;
+        if (bitmaskInt & (1 << 8)) // INT_EG_IF_UTIL
+            stackSize += 4;
+        if (bitmaskInt & (1 << 7)) // INT_BUFFER_INFOS
+            stackSize += 4;
+        if (bitmaskInt & 1) // INT_CHKSUM_COMPL
+            stackSize += 4;
+        if (bitmaskScion & 1) // SCION_AS_ADDR
+            stackSize += 8;
+        request.addUpdate(p4::v1::Update::INSERT, buildIntLenUpdateTableEntry(bitmaskInt, bitmaskScion, stackSize));
+        if (!con.sendWriteRequest(request))
+            return false;
+    }
+    
+    return true;
 }
 
 /// \brief Configure the cloning of messages to CPU.
@@ -483,6 +525,39 @@ static std::unique_ptr<p4::v1::Entity> buildIntTxUtilTableEntry(Port port, LinkU
     auto param = action->add_params();
     param->set_param_id(1);
     toBitstring<LINK_UTIL_BYTES, LinkUtil>(txCount, *param->mutable_value());
+
+    return entity;
+}
+
+/// \brief Build a configuration message describing an entry in the scion_int_lengthtable handing over the INT stack length to int_add_length.
+/// \param[in] bitmaskInt Bitmap used for INT.
+/// \param[in] bitmaskScion Bitmap used for SCION.
+/// \param[in] len Length of the per-hop INT stack.
+static std::unique_ptr<p4::v1::Entity> buildIntLenUpdateTableEntry(uint16_t bitmaskInt, uint16_t bitmaskScion, uint16_t len)
+{
+    auto entity = std::make_unique<p4::v1::Entity>();
+
+    auto entry = entity->mutable_table_entry();
+    entry->set_table_id(TABLE_INT_LEN_UPDATE);
+
+    // Match rule 1: The INT bitmap.
+    auto matchBitmaskInt = entry->add_match();
+    matchBitmaskInt->set_field_id(1);
+    auto exactBitmaskInt = matchBitmaskInt->mutable_exact();
+    toBitstring<BITMASK_BYTES, Bitmask>(bitmaskInt, *exactBitmaskInt->mutable_value());
+    
+    // Match rule 2: The SCION specific INT bitmap.
+    auto matchBitmaskScion = entry->add_match();
+    matchBitmaskScion->set_field_id(2);
+    auto exactBitmaskScion = matchBitmaskScion->mutable_exact();
+    toBitstring<BITMASK_BYTES, Bitmask>(bitmaskScion, *exactBitmaskScion->mutable_value());
+
+    // Action
+    auto action = entry->mutable_action()->mutable_action();
+    action->set_action_id(ACTION_INT_ADD_LEN);
+    auto param = action->add_params();
+    param->set_param_id(1);
+    toBitstring<2, uint16_t>(len, *param->mutable_value());
 
     return entity;
 }
